@@ -57,11 +57,11 @@ public class ChatClientConfig {
     // Reads haiku45.max-tokens (was sonnet46.max-tokens in the old per-model class — silent inheritance bug).
     @Value("${spring.ai.anthropic.haiku45.chat.options.max-tokens:8192}")  private int    haikuMaxTokens;
 
-    // ── Gemini — Flash 3 ─────────────────────────────────────────────
-    @Value("${spring.ai.google.genai.flash3.project-id}")                   private String flash3ProjectId;
-    @Value("${spring.ai.google.genai.flash3.location}")                     private String flash3Location;
-    @Value("${spring.ai.google.genai.flash3.chat.options.model}")           private String flash3Model;
-    @Value("${spring.ai.google.genai.flash3.chat.options.temperature:1.0}") private double flash3Temperature;
+    // ── Gemini — Flash 3.5 ─────────────────────────────────────────────
+    @Value("${spring.ai.google.genai.flash35.project-id}")                   private String flash35ProjectId;
+    @Value("${spring.ai.google.genai.flash35.location}")                     private String flash35Location;
+    @Value("${spring.ai.google.genai.flash35.chat.options.model}")           private String flash35Model;
+    @Value("${spring.ai.google.genai.flash35.chat.options.temperature:1.0}") private double flash35Temperature;
 
     // ── Gemini — Flash 3.1 Lite ──────────────────────────────────────
     @Value("${spring.ai.google.genai.flash31lite.project-id}")                   private String flash31LiteProjectId;
@@ -102,13 +102,13 @@ public class ChatClientConfig {
 
     @Bean
     public ChatClientProvider gemini3Flash() {
-        return geminiProvider("gemini-3-flash-preview",
-                flash3ProjectId, flash3Location, flash3Model, flash3Temperature);
+        return geminiProvider("gemini-3.5-flash",
+                flash35ProjectId, flash35Location, flash35Model, flash35Temperature);
     }
 
     @Bean
     public ChatClientProvider gemini31FlashLite() {
-        return geminiProvider("gemini-3.1-flash-lite-preview",
+        return geminiProvider("gemini-3.1-flash-lite",
                 flash31LiteProjectId, flash31LiteLocation, flash31LiteModel, flash31LiteTemperature);
     }
 
