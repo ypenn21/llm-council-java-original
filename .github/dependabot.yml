@@ -1,0 +1,29 @@
+# Dependabot configuration
+#
+# This is a Vaadin Hilla project: the vaadin-maven-plugin (flow:prepare-frontend)
+# regenerates package.json on every build and pins the frontend npm toolchain to
+# versions tested against the configured <vaadin.version> in pom.xml. Dependabot
+# bumps to those packages are reverted by the build and never take effect, so we
+# ignore the Vaadin-managed surface here. Upgrade them instead by bumping
+# <vaadin.version> in pom.xml.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    ignore:
+      # Vaadin-owned frontend toolchain (pinned via the "$..." overrides + hash)
+      - dependency-name: "vite"
+      - dependency-name: "@vitejs/*"
+      - dependency-name: "esbuild"
+      - dependency-name: "@vaadin/*"
+      - dependency-name: "react-router"
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      - dependency-name: "lit"
+
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
