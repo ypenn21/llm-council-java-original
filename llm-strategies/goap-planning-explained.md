@@ -132,7 +132,187 @@ Because LLM actions cost 10 and Java actions cost 1, A\* guarantees finding the 
 
 ---
 
-## ⚖️ 5. Pros & Cons of GOAP Planning
+## 💻 5. Pure Java Implementation (0 LLM Calls)
+
+Below is the Java implementation demonstrating how `GoapQueryAnalyzer`, `AStarSearchEngine`, and `PlanOptimizer` execute in microseconds without making any LLM API calls during the planning phase.
+
+### Data Model (`WorldState` & `GoapAction`)
+```java
+// Immutable World State tracking system state
+public record WorldState(Map<String, Boolean> state) {
+    public WorldState { state = Map.copyOf(state); }
+
+    public boolean satisfies(WorldState targetGoal) {
+        return targetGoal.state().entrySet().stream()
+                .allMatch(e -> Objects.equals(this.state.get(e.getKey()), e.getValue()));
+    }
+
+    public WorldState applyEffects(WorldState effects) {
+        Map<String, Boolean> nextState = new HashMap<>(this.state);
+        nextState.putAll(effects.state());
+        return new WorldState(nextState);
+    }
+}
+
+// Action declaration with preconditions, effects, and execution cost
+public record GoapAction(
+    String name,
+    int cost,                   // LLM Action = 10, Java Action = 1
+    WorldState preconditions,   // State required before execution
+    WorldState effects          // State produced after execution
+) {
+    public boolean canExecute(WorldState currentState) {
+        return currentState.satisfies(preconditions);
+    }
+}
+```
+
+### Goal Selection (`GoapQueryAnalyzer`)
+```java
+public class GoapQueryAnalyzer {
+    public WorldState analyzeQuery(String userInstruction) {
+        String lower = userInstruction.toLowerCase();
+
+        // 1. Quick Consult Mode: skip agreement & disagreement analysis
+        if (lower.contains("quick") || lower.contains("fast") || lower.contains("brief")) {
+            return new WorldState(Map.of(
+                "RANKINGS_AVAILABLE", true,
+                "SYNTHESIS_AVAILABLE", true
+            ));
+        }
+
+        // 2. Pure Ranking / Benchmark Mode
+        if (lower.contains("rank only") || lower.contains("compare models")) {
+            return new WorldState(Map.of("AGGREGATE_RANKINGS_AVAILABLE", true));
+        }
+
+        // 3. Default: Full 5-Stage Deliberation
+        return new WorldState(Map.of("FINAL_SYNTHESIS_COMPLETED", true));
+    }
+}
+```
+
+### Graph Search Algorithm (`AStarSearchEngine`)
+```java
+public class AStarSearchEngine {
+    private record Node(WorldState state, List<GoapAction> path, int gCost, int hCost) 
+            implements Comparable<Node> {
+        int fCost() { return gCost + hCost; }
+        @Override public int compareTo(Node o) { return Integer.compare(this.fCost(), o.fCost()); }
+    }
+
+    public List<GoapAction> plan(WorldState initialState, WorldState goalState, List<GoapAction> actionRegistry) {
+        PriorityQueue<Node> openSet = new PriorityQueue<>();
+        Set<WorldState> visited = new HashSet<>();
+
+        openSet.add(new Node(initialState, List.of(), 0, calculateHeuristic(initialState, goalState)));
+
+        while (!openSet.isEmpty()) {
+            Node current = openSet.poll();
+
+            if (current.state().satisfies(goalState)) {
+                return current.path(); // Optimal sequence found
+            }
+
+            if (!visited.add(current.state())) continue;
+
+            for (GoapAction action : actionRegistry) {
+                if (action.canExecute(current.state())) {
+                    WorldState nextState = current.state().applyEffects(action.effects());
+                    List<GoapAction> newPath = new ArrayList<>(current.path());
+                    newPath.add(action);
+
+                    int newGCost = current.gCost() + action.cost();
+                    int newHCost = calculateHeuristic(nextState, goalState);
+                    openSet.add(new Node(nextState, newPath, newGCost, newHCost));
+                }
+            }
+        }
+        throw new IllegalStateException("No valid action path found to satisfy goal!");
+    }
+
+    private int calculateHeuristic(WorldState state, WorldState goal) {
+        int unsatisfied = 0;
+        for (var entry : goal.state().entrySet()) {
+            if (!Objects.equals(state.state().get(entry.getKey()), entry.getValue())) unsatisfied++;
+        }
+        return unsatisfied; // Admissible heuristic
+    }
+}
+```
+
+### Auto-Parallelizer (`PlanOptimizer`)
+```java
+public class PlanOptimizer {
+    public record ExecutionLayer(int level, List<GoapAction> parallelActions) {}
+
+    public List<ExecutionLayer> optimize(List<GoapAction> sequentialPlan, WorldState initialState) {
+        List<ExecutionLayer> layers = new ArrayList<>();
+        WorldState currentState = initialState;
+        List<GoapAction> remaining = new ArrayList<>(sequentialPlan);
+
+        int level = 1;
+        while (!remaining.isEmpty()) {
+            List<GoapAction> currentLayer = new ArrayList<>();
+
+            for (Iterator<GoapAction> it = remaining.iterator(); it.hasNext(); ) {
+                GoapAction action = it.next();
+                if (action.canExecute(currentState)) {
+                    currentLayer.add(action);
+                    it.remove();
+                }
+            }
+
+            for (GoapAction action : currentLayer) {
+                currentState = currentState.applyEffects(action.effects());
+            }
+
+            layers.add(new ExecutionLayer(level++, currentLayer));
+        }
+
+        return layers;
+    }
+}
+```
+
+---
+
+## 📝 6. Concrete Prompt Examples & Execution Traces
+
+Below are three prompt examples demonstrating how different user instructions translate into goal states, A\* paths, and parallel execution layers.
+
+### Example 1: Quick Consult Prompt
+* **Prompt**: *"Give me a **quick** trade-off analysis: Should our startup migrate from AWS EC2 to Cloud Run?"*
+* **Analyzer Goal**: `{RANKINGS_AVAILABLE: true, SYNTHESIS_AVAILABLE: true}`
+* **A\* Path Cost**: $f(n) = 31$ (`GenerateResponses` $\rightarrow$ `EvaluateRankings` $\rightarrow$ `AggregateRankings` $\rightarrow$ `SynthesizeFinal`)
+* **Parallel Execution Layers**:
+  * **Layer 1**: `GenerateResponses` *(Parallel model calls)*
+  * **Layer 2**: `EvaluateRankings` *(Peer review calls)*
+  * **Layer 3**: `AggregateRankings` *(Java Kendall's W math)*
+  * **Layer 4**: `SynthesizeFinal` *(Chairman synthesis)*
+* **Savings**: Skips Stages 3 & 4 (Agreement and Disagreement analysis), saving **~40% of tokens**.
+
+### Example 2: Full Deliberation Prompt
+* **Prompt**: *"Should we adopt Event Sourcing and CQRS for our financial engine? Analyze trade-offs, areas of consensus, and points of divergence."*
+* **Analyzer Goal**: `{FINAL_SYNTHESIS_COMPLETED: true}`
+* **A\* Path Cost**: $f(n) = 53$ (8 sequential actions)
+* **Parallel Execution Layers**:
+  * **Layer 1**: `GenerateResponses`
+  * **Layer 2 (Parallel)**: ⚡ `EvaluateRankings` + ⚡ `AnalyzeAgreements` + ⚡ `AnalyzeDisagreements`
+  * **Layer 3 (Parallel Aggregation)**: `AggregateRankings` + `AggregateAgreements` + `AggregateDisagreements`
+  * **Layer 4**: `SynthesizeFinal`
+
+### Example 3: Model Evaluation Prompt
+* **Prompt**: *"Compare models and **rank only**: Which response optimizes this SQL query best?"*
+* **Analyzer Goal**: `{AGGREGATE_RANKINGS_AVAILABLE: true}`
+* **Parallel Execution Layers**:
+  * **Layer 1**: `GenerateResponses`
+  * **Layer 2**: `EvaluateRankings`
+  * **Layer 3**: `AggregateRankings` *(Stops execution immediately — 60% token savings!)*
+
+---
+
+## ⚖️ 7. Pros & Cons of GOAP Planning
 
 ### ✅ Advantages
 * **Zero LLM Planning Cost**: A\* search runs entirely in Java — planning completes in microseconds vs 100ms–2s per step for LLM supervisors.
@@ -153,3 +333,4 @@ Because LLM actions cost 10 and Java actions cost 1, A\* guarantees finding the 
 * [llm-council-explained.md](file:///home/user/llm-council-java-original/llm-council-explained.md) — Main LLM Council Architecture & 6 Planning Patterns Overview
 * [htn-planning-explained.md](file:///home/user/llm-council-java-original/htn-planning-explained.md) — HTN Planning Pattern Deep Dive
 * `planning_spec_drive-agents.pdf` — Specification slide deck by Dan Dobrin (Google Cloud)
+
